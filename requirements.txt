@@ -1,0 +1,4 @@
+docker-compose
+pykube
+google-python-api-client
+click
