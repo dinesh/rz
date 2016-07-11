@@ -14,21 +14,22 @@ class ComposeProject:
     self.project        = get_project(root)
     self.gcs_project_id = gcs_project_id
     self.options        = options
-    self.kube_objects   = []
 
   @property
-  def kube_configuration(self):
-    self.kube_objects = _parse_docker_compose(self.project)
-    return self.kube_objects
+  def kube_objects(self):
+    return _parse_docker_compose(self.project)
 
   @classmethod
   def from_file(cls, gcs_project_id, filename, **kwargs):
     root = os.path.dirname(filename)
     return ComposeProject(root, gcs_project_id, **kwargs)
 
-  def save(self, k8config, cached_path):
+  def save(self, cached_path, k8config=None):
+    if k8config is None:
+      k8config = self.kube_objects
+
     with open(cached_path, 'w') as file:
-      file.write(yaml.safe_dump_all(self.kube_objects,
+      file.write(yaml.safe_dump_all(k8config,
         default_flow_style=False,
         allow_unicode=True,
         encoding='utf-8'))
@@ -40,7 +41,7 @@ class ComposeProject:
           self.gcs_project_id, 
           self.options.get('gcs_bucket'))
 
-        source_key = gce.upload_to_gcr(bucket, archive)
+        source_key = gce.upload_to_gcr(self.gcs_project_id, bucket, archive)
 
         image_uri = "asia.gcr.io/%s/%s" % (self.gcs_project_id, service.name)
         gce.build_from_gcr(self.gcs_project_id, bucket, source_key, image_uri)
@@ -50,22 +51,19 @@ class ComposeProject:
 
 def _parse_docker_compose(project):
   kube_objects = []
-  rc_version = 'v1'
+  dp_version = 'extensions/v1beta1'
 
   for service in project.services:
     service_ports = build_container_ports(service.options, service.options)
 
-    rc_spec = {
-      "kind": "ReplicationController",
-      "apiVersion": rc_version,
+    dp_spec = {
+      "kind": "Deployment",
+      "apiVersion": dp_version,
       "metadata": {
         "name": service.name,
       },
       "spec": {
         "replicas": 1,
-        "selector": {
-          "app": service.name
-        },
         "template": None
       }
     }
@@ -133,7 +131,7 @@ def _parse_docker_compose(project):
       if volumes:
         pod_spec['spec']['volumes'] = volumes
 
-    rc_spec['spec']['template'] = pod_spec
+    dp_spec['spec']['template'] = pod_spec
 
     port_bindings = build_port_bindings(service.options.get('ports', []))
 
@@ -157,7 +155,7 @@ def _parse_docker_compose(project):
       }
       kube_objects.append(svc_spec)
 
-    kube_objects.append(rc_spec)
+    kube_objects.append(dp_spec)
 
   return kube_objects
 

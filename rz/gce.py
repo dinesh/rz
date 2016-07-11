@@ -1,4 +1,5 @@
 import os
+import time
 import tempfile
 import tarfile
 import backports.ssl_match_hostname
@@ -59,7 +60,7 @@ def archive_codebase(path, project_id, bucket=None):
   return bucket, archive
 
 
-def upload_to_gcr(bucket, archive):
+def upload_to_gcr(project_id, bucket, archive):
   source_key = os.path.basename(archive.name)
 
   print 'Checking for bucket %s...' % bucket
@@ -131,15 +132,14 @@ def build_from_gcr(project_id, bucket, source_key, image_uri):
 
   resp = req.execute()
 
-  if resp['metadata']['build']['status'] == 'QUEUED':
+  if resp['metadata']['build']['status'] in ['QUEUED', 'QUEUING']:
     print 'Queued build %s' % resp['metadata']['build']['id']
 
     operation_id = resp['name']
-    while (resp['metadata']['build']['status'] == 'QUEUED' or
-          resp['metadata']['build']['status'] == 'WORKING'):
+    while resp['metadata']['build']['status'] in ['QUEUED', 'QUEUING', 'WORKING']:
       resp = ccb_service.operations().get(name=operation_id).execute()
       print 'Building... %s' % resp['metadata']['build']['status']
-      time.sleep(1)
+      time.sleep(2)
 
   if resp['metadata']['build']['status'] == 'SUCCESS':
     resp = ccb_service.operations().get(name=operation_id).execute()
