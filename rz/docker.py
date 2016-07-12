@@ -6,13 +6,13 @@ from compose.service import build_port_bindings, build_container_ports
 from rz import gce
 
 class ComposeProject:
-  def __init__(self, root, gcs_project_id, **options):
-    if not root:
+  def __init__(self, root, gce_project_id, **options):
+    if root is None:
       raise RuntimeError("Missing root")
 
     self.root           = os.path.abspath(root)
     self.project        = get_project(root)
-    self.gcs_project_id = gcs_project_id
+    self.gce_project_id = gce_project_id
     self.options        = options
 
   @property
@@ -20,9 +20,8 @@ class ComposeProject:
     return _parse_docker_compose(self.project)
 
   @classmethod
-  def from_file(cls, gcs_project_id, filename, **kwargs):
-    root = os.path.dirname(filename)
-    return ComposeProject(root, gcs_project_id, **kwargs)
+  def from_file(cls, gce_project_id, project_path, **kwargs):
+    return ComposeProject(project_path, gce_project_id, **kwargs)
 
   def save(self, cached_path, k8config=None):
     if k8config is None:
@@ -34,17 +33,18 @@ class ComposeProject:
         allow_unicode=True,
         encoding='utf-8'))
 
-  def build(self):
+  def build(self, skip=False):
     for service in self.project.services:
       if 'build' in service.options:
-        bucket, archive = gce.archive_codebase(self.root, 
-          self.gcs_project_id, 
-          self.options.get('gcs_bucket'))
+        bucket = self.options.get('gce_bucket', '%s-cbstorage' % self.gce_project_id)
+        image_uri = "asia.gcr.io/%s/%s" % (self.gce_project_id, service.name)
+        
+        if not skip:
+          bucket, archive = gce.archive_codebase(self.root, 
+                              self.gce_project_id, bucket)
 
-        source_key = gce.upload_to_gcr(self.gcs_project_id, bucket, archive)
-
-        image_uri = "asia.gcr.io/%s/%s" % (self.gcs_project_id, service.name)
-        gce.build_from_gcr(self.gcs_project_id, bucket, source_key, image_uri)
+          source_key = gce.upload_to_gcr(self.gce_project_id, bucket, archive)
+          gce.build_from_gcr(self.gce_project_id, bucket, source_key, image_uri)
 
         service.options.pop('build')
         service.options['image'] = image_uri
@@ -68,12 +68,21 @@ def _parse_docker_compose(project):
       }
     }
 
+    exposed_ports = []
+    for port in service_ports:
+      if isinstance(port, basestring):
+        exposed_ports.append({"containerPort": int(port), "protocol": "TCP"})
+      elif isinstance(port, (tuple, list)):
+        exposed_ports.append({"containerPort": int(port[0]), "protocol": port[1].upper() })
+      else:
+        raise ValueError("Unexpected value for port: %s" % port)
+
     pod_spec =  {
       "spec": {
         "containers" : [{
           "name": service.name,
           "image": service.image_name,
-          "ports": [{"containerPort": int(port), "protocol": "TCP" } for port in service_ports],
+          "ports": exposed_ports,
         }]
       },
       "metadata": {
@@ -84,16 +93,18 @@ def _parse_docker_compose(project):
       }
     }
 
+    service_volumes = service.options.get('volumes', [])[:]
+
     if service.volumes_from:
-      pod_spec['spec']['volumes'] = [
-        { "name": os.path.basename(volume.external), "emptyDir": {} } for volume in service.volumes_from
-      ]
+      for external_volume in service.volumes_from:
+        for vol_spec in external_volume.source.options['volumes']:
+          service_volumes.append(vol_spec)
 
     spec = pod_spec['spec']['containers'][0]
 
     if 'environment' in service.options:
       environment = service.options['environment']
-      spec['env'] = [{ "name": str(key), "value": environment[key] } for key in environment]
+      spec['env'] = [{"name": str(key), "value": environment[key] } for key in environment]
 
     if 'command' in service.options:
       spec['args'] = service.options['command']
@@ -101,15 +112,15 @@ def _parse_docker_compose(project):
     if 'entrypoint' in service.options:
       spec['command'] = [service.options['entrypoint']]
 
-    if service.options['volumes']:
+    if service_volumes:
       volumeMounts, volumes = [], []
 
-      for vol in service.options['volumes']:
+      for vol in service_volumes:
         vol_name = os.path.basename(vol.external).replace('_', '-')
         volumeMounts.append({"name": vol_name, "mountPath": vol.internal})
 
         if '/' in vol.external:
-          volumes.append({ "name": vol_name, "hostPath": vol.external})
+          volumes.append({ "name": vol_name, "hostPath": { "path": vol.external}})
         else:
           found = False
           for _vname, _vol in project.volumes.volumes.items():
@@ -117,10 +128,10 @@ def _parse_docker_compose(project):
               found = True
               if _vol.driver == 'gce':
                 volumes.append({ "name": vol_name, "gcePersistentDisk": _vol.driver_opts })
-              if _vol.driver == 'local':
+              if _vol.driver == 'local' or _vol.driver is None:
                 volumes.append({ "name": vol_name, "emptyDir": {} })
               else:
-                raise "Driver of type: %s is not yet supported" % _vol.driver
+                raise RuntimeError("Driver of type: %s is not yet supported" % _vol.driver)
             
           if not found:
             volumes.append({ "name": vol_name, "emptyDir": {}})
@@ -136,23 +147,29 @@ def _parse_docker_compose(project):
     port_bindings = build_port_bindings(service.options.get('ports', []))
 
     for container_port, host_ports  in port_bindings.items():
+      _port = container_port.split('/')[0]
+      _host_port = host_ports[0] or _port
+
       svc_spec = {
         "kind": "Service",
         "apiVersion": "v1",
         "metadata": {
-          "name": "%s-service" % service.name,
+          "name": service.name,
         },
         "spec": {
           "ports": [{
-            "port": int(host_ports[0]),
-            "targetPort": int(container_port)
+            "port": int(_host_port),
+            "targetPort": int(_port),
           }],
           "selector": {
             "app": service.name
-          },
-          "type": "LoadBalancer"
+          }
         }
       }
+
+      if int(_host_port) == 80:
+        svc_spec['spec']['type'] = "LoadBalancer"
+
       kube_objects.append(svc_spec)
 
     kube_objects.append(dp_spec)
