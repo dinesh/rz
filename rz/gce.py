@@ -2,41 +2,9 @@ import os
 import time
 import tempfile
 import tarfile
-import backports.ssl_match_hostname
-import pykube
 from googleapiclient import discovery, http
 from googleapiclient.errors import HttpError
 from oauth2client.client import GoogleCredentials
-
-# Monkey-patch match_hostname with backports's match_hostname, allowing for IP addresses
-# XXX: the exception that this might raise is
-# backports.ssl_match_hostname.CertificateError
-pykube.http.requests.packages.urllib3.connection.match_hostname = \
-    backports.ssl_match_hostname.match_hostname
-
-
-class KubeClient:
-
-    def __init__(self, context=None):
-        self.context = context
-
-    @property
-    def api(self):
-        config = pykube.KubeConfig.from_file(
-            os.path.join(os.environ['HOME'], ".kube/config"))
-        if self.context:
-            config.set_current_context(self.context)
-
-        return pykube.HTTPClient(config)
-
-    def object(self, kube_object):
-        underlying = getattr(pykube, kube_object['kind'])
-        if not underlying:
-            RuntimeError(
-                "%s object is not supported by rz currently." %
-                kube_object['kind'])
-
-        return underlying.__call__(self.api, kube_object)
 
 
 def archive_codebase(path, project_id, bucket=None):

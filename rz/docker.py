@@ -18,13 +18,12 @@ class ComposeProject:
         self.root = os.path.abspath(root)
         self.project = get_project(root)
 
-    @property
-    def kube_objects(self):
-        return _parse_docker_compose(self.project)
+    def kube_objects(self, **kawrgs):
+        return _parse_docker_compose(self.project, **kwargs)
 
     def save_for_k8(self, cached_path, objects=None):
         if objects is None:
-            objects = self.kube_objects
+            objects = self.kube_objects()
 
         with open(cached_path, 'w') as file:
             file.write(yaml.safe_dump_all(objects,
@@ -133,8 +132,8 @@ def get_image(req, pull_image, dry_run=False):
     return found
 
 
-def _parse_docker_compose(project, ns_name='default'):
-    kube_objects = []
+def _parse_docker_compose(project, **kwargs):
+    ns_name, kube_objects = kwargs.get('namespace', 'default'), []
     dp_version = 'extensions/v1beta1'
 
     if ns_name != 'default':
@@ -188,7 +187,7 @@ def _parse_docker_compose(project, ns_name='default'):
                     "name": service.name,
                     "image": service.image_name,
                     "ports": exposed_ports,
-                    "imagePullPolicy": "IfNotPresent",
+                    "imagePullPolicy": "Never"
                 }]
             },
             "metadata": {

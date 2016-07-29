@@ -1,9 +1,10 @@
 import click
 from ConfigParser import ConfigParser
 from operator import itemgetter
-from rz import ComposeProject, KubeClient
+from rz import ComposeProject, kube
 import yaml
 import os
+import sys
 import time
 import pykube
 
@@ -99,18 +100,20 @@ def init(*args, **kvargs):
 
 
 @cli.command()
-@click.option(
-    '--skip',
-    is_flag=True,
-    default=False, help="Skip image generation on GCE cloudbuild")
+@click.option('--builder', '-b',
+              default='local',
+              type=click.Choice(['google', 'aws', 'local']))
 @click.option('--out', '-o',
-              type=click.Path(exists=True),
+              type=click.Path(),
               default="gce.yml",
               help="path to kubernetes configration")
-@click.option('--builder', '-b',
-              default='google',
-              type=click.Choice(['google', 'aws', 'local']))
-def build(skip, out, builder):
+@click.option('--namespace', '-n',
+              default='default',
+              help='kubernetes namespace to use.')
+@click.option('--skip', is_flag=True,
+              default=False,
+              help="Skip image generation on GCE cloudbuild")
+def build(builder, out, namespace, skip):
     if builder == 'local':
         config = {}
     elif builder == 'google':
@@ -121,18 +124,21 @@ def build(skip, out, builder):
 
     project = ComposeProject(os.getcwd())
     project.build_with(builder, config, skip)
-    project.save_for_k8(out)
+    parsed_config = project.kube_objects(namespace=namespace)
+    project.save_for_k8(out, parsed_config)
     click.echo("kubernetes configuration saved at %s" % out)
 
 
 @cli.command()
-@click.option('--kube-config', '-k',
-              default="gce.yml", help="path to kubernetes configration")
-def up(kube_config):
-    with open(kube_config, 'r') as fp:
+@click.option('--path', '-p',
+              default="gce.yml",
+              type=click.Path(exists=True),
+              help="path to kubernetes configration")
+def start(path):
+    with open(path, 'r') as fp:
         k8config = yaml.load_all(fp.read())
 
-    k8client = KubeClient()
+    k8client = kube.Client()
     for k8object in k8config:
         print "Starting service %s ..." % k8object['metadata']['name']
         k8client.object(k8object).create()
@@ -141,68 +147,91 @@ def up(kube_config):
 
 
 @cli.command()
-def down():
-    client = KubeClient()
-    for rc in pykube.Deployment.objects(client.api):
-        click.echo("Deleting deployment %s" % rc)
-        rc.delete()
+def stop():
+    client = kube.Client()
+    for dp in pykube.Deployment.objects(client.api):
+        dp = kube.get_entity(dp)
+        dp.reap()
+
+        click.echo("Deleting deployment %s" % dp)
+        dp.delete()
 
     for svc in pykube.Service.objects(client.api):
         click.echo("Deleting service %s" % svc)
         svc.delete()
 
 
+@click.option('--context', '-c',
+              default="localkube",
+              help="kubernetes cluster context to use")
+@click.option('--path', '-p',
+              default="gce.yml",
+              type=click.Path(exists=True),
+              help="path to kubernetes configration")
+@click.option('--rollback/--no-rollback',
+              is_flag=True, default=True,
+              help='rollback the deploy if not successful.')
+@click.option('--revision',
+              default=0,
+              help='revision number to rollback.')
 @cli.command()
-@click.option('--config', '-c',
-              default="gce.yml", help="path to kubernetes configration")
-def deploy(config):
-    with open(config, 'r') as fp:
+def deploy(context, path, rollback, revision):
+    with open(path, 'r') as fp:
         objects = yaml.load_all(fp.read())
 
-    client = KubeClient()
+    client = kube.Client(context)
+    revisions = client.get_deplopyment_revisions()
+
+    if len(revisions) > 0:
+        if len(revisions) > 1:
+            click.echo(
+                "Cluster seems to have multiple revisions: {},\
+                 Aborting deployment.".format(revisions))
+            sys.exit(1)
+        else:
+            click.echo("Detected deployed version: %s" % revisions[0])
 
     for _object in objects:
-        kobject = client.object(_object)
+        deployed_object = client.get_by_name(
+            _object['kind'], _object['metadata']['name'])
+        new_object = client.object(_object)
 
-        if kobject.exists():
-            click.echo("Updating %s: %s" % (_object['kind'], kobject.name))
-            kobject.update()
+        if deployed_object:
+            click.echo("Updating %s: %s" % (_object['kind'], new_object.name))
+            new_object.update()
         else:
             click.echo("Creating %s: %s" %
                        (_object['kind'], _object['metadata']['name']))
-            kobject.create()
+            new_object.create()
 
-    from rz import kube
-
-    rollback = False
+    deployement_failed = False
+    time.sleep(2)
 
     for dp in pykube.Deployment.objects(client.api):
-        dp = kube.Deployment(dp.api, dp.obj)
+        dp = kube.get_entity(dp)
         failed_pods, status = dp.check_status()
 
         if status is not kube.PHASE_RUNNING:
-            rollback = True
-            assert len(failed_pods) > 0
+            deployement_failed = True
             for pod in failed_pods:
-                click.echo(
-                  "{} failed to start because of".format(
-                    pod.logs()['message']
-                  )
-                )
+                click.secho(pod.logs(), bg='red')
 
-    if rollback:
-        click.echo("Rolling back")
+    if deployement_failed:
+        if rollback:
+            to_revision = revision
+            click.secho("Rolling back to last revision: %s" %
+                        to_revision, bold=True)
 
-        for dp in pykube.Deployment.objects(client.api):
-            dp = kube.Deployment(dp.api, dp.obj)
-            dp.reap()
-
-            click.echo("Deleting Deployment %s" % dp)
-            dp.delete()
-
-        for svc in pykube.Service.objects(client.api):
-            click.echo("Deleting service %s" % svc)
-            svc.delete()
+            for dp in pykube.Deployment.objects(client.api):
+                dp = kube.get_entity(dp)
+                rolled_back, error = dp.rollback(to_revision)
+                if rolled_back:
+                    click.echo("->> Rolled back successfully.")
+                else:
+                    click.echo("->> Rolling failed b/c of error: %s" % error)
+                    sys.exit(1)
+    else:
+        click.echo("->> SUCCESS")
 
 
 def main():
