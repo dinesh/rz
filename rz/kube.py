@@ -93,13 +93,9 @@ class Deployment(pykube.Deployment):
     def __init__(self, *args):
         pykube.Deployment.__init__(self, *args)
 
-    def replica_sets(self):
-        return pykube.ReplicaSet.objects(self.api).filter(
-            namespace=self.namespace,
-            selector=self.obj['spec']['selector']['matchLabels']
-        )
-
     def rollback(self, to_version=0):
+        r_version = Event.objects(self.api).filter().response['metadata']['resourceVersion']
+
         rollback_object = dict(name=self.name, rollbackTo={'revision': to_version})
         r = self.api.post(**self.api_kwargs(
                 operation='rollback',
@@ -110,23 +106,13 @@ class Deployment(pykube.Deployment):
         done, success, error = False, False, None
 
         while not done:
-            selector = {
-                'involvedObject.kind': self.kind,
-                'involvedObject.name': self.name,
-                'involvedObject.uid': self.obj['metadata']['uid']
-            }
-
-            events = list(Event.objects(self.api).filter(field_selector=selector))
-            if len(events) > 0:
-                ev = events[-1].obj
-                print ev
+            for event in Event.objects(self.api).filter(resource_version=r_version):
+                ev = event.obj
                 if ev['reason'] == 'DeploymentRollbackRevisionNotFound':
                     done, error = True, ev['message']
                 else:
-                    success = re.match(
-                        "Rolled back deployment \"%s\"" % 
-                        self.name, ev['message'])
-                    done = success
+                    success = ev['reason'] == 'DeploymentRollback'
+                    done    = success
 
             time.sleep(2)
 
@@ -151,15 +137,16 @@ class Deployment(pykube.Deployment):
 
         while status == PHASE_UNKNOWN:
             running_count = 0
-            running_pods = pykube.Pod.objects(self.api).filter(
+            ## check for newly created pods only ...
+            deployment_pods = pykube.Pod.objects(self.api).filter(
                 namespace=self.namespace,
                 selector=match_selector)
 
-            for pod in running_pods:
+            for pod in deployment_pods:
                 pod = get_entity(pod)
                 phase, error = pod.current_phase()
 
-                print "pod %s: phase: %s error: %s" % (pod, phase, error)
+                click.echo("pod %s: phase: %s error: %s" % (pod, phase, error))
 
                 if phase == POD_RUNNING:
                     running_count += 1

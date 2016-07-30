@@ -160,6 +160,38 @@ def stop():
         click.echo("Deleting service %s" % svc)
         svc.delete()
 
+@click.option('--context', '-c',
+              default="localkube",
+              help="kubernetes cluster context to use")
+@click.option('--revision',
+              default=0,
+              help='revision number to rollback.')
+@cli.command()
+def rollback(context, revision):
+    client = kube.Client(context)
+    revisions = client.get_deplopyment_revisions()
+
+    if len(revisions) > 0:
+        if len(revisions) > 1:
+            click.echo(
+                "Cluster seems to have multiple revisions: {},\
+                 Aborting deployment.".format(revisions))
+            sys.exit(1)
+        else:
+            click.echo("Detected deployed version: %s" % revisions[0])
+
+    to_revision = revision
+    click.secho("Rolling back to revision: %s" % to_revision, bold=True)
+
+    for dp in pykube.Deployment.objects(client.api):
+        dp = kube.get_entity(dp)
+        rolled_back, error = dp.rollback(to_revision)
+        if rolled_back:
+            click.echo("->> Rolled back successfully.")
+        else:
+            click.echo("->> Rolling failed b/c of error: %s" % error)
+            sys.exit(1)
+
 
 @click.option('--context', '-c',
               default="localkube",
