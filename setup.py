@@ -17,10 +17,10 @@ if not version:
     raise RuntimeError('Cannot find version information')
 
 setup(
-    name='rz',
+    name='rz-python',
     version=version,
-    description='Painless deployment on GCS (Kubernetes 1.2)',
-    author_email="dinesh1042@gmail.com",
+    description='CI/CD tool for Kubernetes 1.x',
+    author_email="dineshyadav.iiit@gmail.com",
     author="Dinesh Yadav",
     url="https://github.com/dinesh/rz",
     packages=['rz'],
