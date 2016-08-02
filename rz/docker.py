@@ -5,7 +5,6 @@ import yaml
 import subprocess
 from compose.cli.command import get_project
 from compose.service import build_port_bindings, build_container_ports
-
 from rz import gce
 
 
@@ -18,14 +17,14 @@ class ComposeProject:
         self.root = os.path.abspath(root)
         self.project = get_project(root)
 
-    def kube_objects(self, **kawrgs):
+    def kube_objects(self, **kwargs):
         return _parse_docker_compose(self.project, **kwargs)
 
-    def save_for_k8(self, cached_path, objects=None):
+    def save_for_k8(self, path, objects=None):
         if objects is None:
             objects = self.kube_objects()
 
-        with open(cached_path, 'w') as file:
+        with open(path, 'w') as file:
             file.write(yaml.safe_dump_all(objects,
                                           default_flow_style=False,
                                           allow_unicode=True,
@@ -295,6 +294,14 @@ def _parse_docker_compose(project, **kwargs):
             kube_objects.append(svc_spec)
 
         kube_objects.append(dp_spec)
+
+        ignored_fields = ['cap_add', 'cap_drop', 'cgroup_parent', 'container_name', 
+            'devices', 'depends_on', 'dns', 'dns_search', 'tmpfs', 'extends', 
+            'external_links', 'extra_hosts', 'labels', 'links', 'logging']
+
+        for field in ignored_fields:
+            if field in service.options:
+                print "warning: skipping: %s\n" % field
 
     return kube_objects
 

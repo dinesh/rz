@@ -106,13 +106,12 @@ def build_from_gcr(project_id, bucket, source_key, image_uri, build_options={}):
     }
 
     credentials = GoogleCredentials.get_application_default()
-    ccb_service = discovery.build('cloudbuild', 'v1', credentials=credentials,
-                                  discoveryServiceUrl="https://content-cloudbuild.googleapis.com/\
-                      $discovery/rest?version=v1")
+    ccb_service = discovery.build('cloudbuild', 'v1', credentials=credentials, discoveryServiceUrl=\
+                    "https://content-cloudbuild.googleapis.com/$discovery/rest?version=v1")
 
     req = ccb_service.projects().builds().create(
-        projectId=project_id, body=cb_request_body)
-
+            projectId=project_id, body=cb_request_body
+    )
     resp = req.execute()
 
     if resp['metadata']['build']['status'] in ['QUEUED', 'QUEUING']:

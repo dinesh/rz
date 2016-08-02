@@ -10,7 +10,6 @@ import pykube
 
 config_filename = '.rz.ini'
 
-
 def get_config(section):
     parser = ConfigParser()
     parser.read(config_filename)
@@ -98,28 +97,31 @@ class InitCLI(click.MultiCommand):
 def init(*args, **kvargs):
     pass
 
-
 @cli.command()
 @click.option('--builder', '-b',
               default='local',
               type=click.Choice(['google', 'aws', 'local']))
 @click.option('--out', '-o',
               type=click.Path(),
-              default="gce.yml",
+              default="deploy.yml",
               help="path to kubernetes configration")
 @click.option('--namespace', '-n',
               default='default',
               help='kubernetes namespace to use.')
 @click.option('--skip', is_flag=True,
               default=False,
-              help="Skip image generation on GCE cloudbuild")
-def build(builder, out, namespace, skip):
-    if builder == 'local':
-        config = {}
-    elif builder == 'google':
-        config = get_gcs_config(ensure_keys=['project_id', 'zone'])
-
-    elif builder == 'aws':
+              help="Skip image building")
+@click.option('--gce-project-id', help="Google Cloud Project Id")
+@click.option('--gce-zone', help="Google Cloud Zone", default="us-central1-a")
+def build(builder, out, namespace, skip, gce_project_id, gce_zone):
+    config = {}
+    if builder == 'google':
+        assert gce_project_id
+        assert gce_zone
+        config["project_id"] = gce_project_id
+        config['zone']       = gce_zone
+    
+    if builder == 'aws':
         raise NotImplementedError()
 
     project = ComposeProject(os.getcwd())
@@ -127,7 +129,6 @@ def build(builder, out, namespace, skip):
     parsed_config = project.kube_objects(namespace=namespace)
     project.save_for_k8(out, parsed_config)
     click.echo("kubernetes configuration saved at %s" % out)
-
 
 @cli.command()
 @click.option('--path', '-p',
