@@ -186,7 +186,7 @@ def _parse_docker_compose(project, **kwargs):
                     "name": service.name,
                     "image": service.image_name,
                     "ports": exposed_ports,
-                    "imagePullPolicy": "Never"
+                    "imagePullPolicy": "IfNotPresent"
                 }]
             },
             "metadata": {

@@ -19,7 +19,7 @@ if not version:
 setup(
     name='rz-python',
     version=version,
-    description='CI/CD tool for Kubernetes 1.x',
+    description='CI/CD tool for Kubernetes 1.2+',
     author_email="dineshyadav.iiit@gmail.com",
     author="Dinesh Yadav",
     url="https://github.com/dinesh/rz",
@@ -27,7 +27,8 @@ setup(
     license='MIT',
     entry_points={
         'console_scripts': [
-            'rz = rz.cli:main'
+            'rzb = rz.cli:builder',
+            'rzd = rz.cli:deployer'
         ]
     },
     install_requires=reqs,

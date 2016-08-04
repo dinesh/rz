@@ -57,17 +57,23 @@ class Client:
         return revisions
 
 
-POD_NOT_READY = 'not_ready'
-POD_RUNNING = 'running'
-POD_FAILED = 'failed'
+POD_NOT_READY   = 'not_ready'
+POD_RUNNING     = 'running'
+POD_FAILED      = 'failed'
 
-PHASE_UNKNOWN = 'unknown'
-PHASE_RUNNING = 'running'
-PHASE_FAILED = 'failed'
+PHASE_UNKNOWN   = 'unknown'
+PHASE_RUNNING   = 'running'
+PHASE_FAILED    = 'failed'
 PHASE_SUCCEEDED = 'succeeded'
 
 CONTAINER_ERROR_STATES = [
-    'imagepullbackoff', 'errimagepull', 'crashloopbackOff']
+    'CrashLoopBackOff',
+    'ImagePullBackOff',
+    'ImageInspectError',
+    'ErrImagePull',
+    'ErrImageNeverPull',
+    'RegistryUnavailable'
+]
 
 
 class ReplicaSet(pykube.ReplicaSet):
@@ -200,7 +206,7 @@ class Pod(pykube.Pod):
                     state = container_status['state']
 
                     if 'waiting' in state:
-                        reason = state['waiting']['reason'].lower()
+                        reason = state['waiting']['reason']
                         if reason in CONTAINER_ERROR_STATES:
                             status = POD_FAILED
                             error = state['waiting']['message']

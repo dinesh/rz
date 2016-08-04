@@ -2,10 +2,7 @@ import click
 from ConfigParser import ConfigParser
 from operator import itemgetter
 from rz import ComposeProject, kube
-import yaml
-import os
-import sys
-import time
+import yaml, os, sys, time
 import pykube
 
 config_filename = '.rz.ini'
@@ -37,9 +34,12 @@ def get_gcs_config(ensure_keys=[]):
 
 
 @click.group()
-def cli():
+def deployer():
     pass
 
+@click.group()
+def builder():
+    pass
 
 class InitCLI(click.MultiCommand):
 
@@ -93,11 +93,11 @@ class InitCLI(click.MultiCommand):
                                  callback=docker_init)
 
 
-@cli.command(cls=InitCLI)
+@builder.command(cls=InitCLI)
 def init(*args, **kvargs):
     pass
 
-@cli.command()
+@builder.command()
 @click.option('--builder', '-b',
               default='local',
               type=click.Choice(['google', 'aws', 'local']))
@@ -130,7 +130,7 @@ def build(builder, out, namespace, skip, gce_project_id, gce_zone):
     project.save_for_k8(out, parsed_config)
     click.echo("kubernetes configuration saved at %s" % out)
 
-@cli.command()
+@deployer.command()
 @click.option('--path', '-p',
               default="gce.yml",
               type=click.Path(exists=True),
@@ -147,7 +147,7 @@ def start(path):
     click.echo("DONE !!")
 
 
-@cli.command()
+@deployer.command()
 def stop():
     client = kube.Client()
     for dp in pykube.Deployment.objects(client.api):
@@ -167,7 +167,7 @@ def stop():
 @click.option('--revision',
               default=0,
               help='revision number to rollback.')
-@cli.command()
+@deployer.command()
 def rollback(context, revision):
     client = kube.Client(context)
     revisions = client.get_deplopyment_revisions()
@@ -193,12 +193,11 @@ def rollback(context, revision):
             click.echo("->> Rolling failed b/c of error: %s" % error)
             sys.exit(1)
 
-
 @click.option('--context', '-c',
               default="localkube",
               help="kubernetes cluster context to use")
 @click.option('--path', '-p',
-              default="gce.yml",
+              default="deploy.yml",
               type=click.Path(exists=True),
               help="path to kubernetes configration")
 @click.option('--rollback/--no-rollback',
@@ -207,10 +206,10 @@ def rollback(context, revision):
 @click.option('--revision',
               default=0,
               help='revision number to rollback.')
-@cli.command()
+@deployer.command()
 def deploy(context, path, rollback, revision):
     with open(path, 'r') as fp:
-        objects = yaml.load_all(fp.read())
+        objects = list(yaml.load_all(fp.read()))
 
     client = kube.Client(context)
     revisions = client.get_deplopyment_revisions()
@@ -218,13 +217,23 @@ def deploy(context, path, rollback, revision):
     if len(revisions) > 0:
         if len(revisions) > 1:
             click.echo(
-                "Cluster seems to have multiple revisions: {},\
+                "Cluster seems to have multiple deployment revisions: {},\
                  Aborting deployment.".format(revisions))
             sys.exit(1)
         else:
             click.echo("Detected deployed version: %s" % revisions[0])
 
-    for _object in objects:
+    for kind in [o['kind'] for o in objects]:
+        if kind not in ['Deployment', 'ReplicationController', 'Pod', 'Service']:
+            raise ValueError("rzb doesn't handle object of type: %s" % kind)
+
+    ordered_objects = [o for o in objects if o['kind'] == 'Pod'] + \
+          [o for o in objects if o['kind'] == 'Deployment'] + \
+          [o for o in objects if o['kind'] == 'ReplicationController'] + \
+          [o for o in objects if o['kind'] == 'Service']
+
+    print len(ordered_objects)
+    for _object in ordered_objects:
         deployed_object = client.get_by_name(
             _object['kind'], _object['metadata']['name'])
         new_object = client.object(_object)
@@ -266,9 +275,5 @@ def deploy(context, path, rollback, revision):
     else:
         click.echo("->> SUCCESS")
 
-
-def main():
-    cli()
-
 if __name__ == '__main__':
-    main()
+    deployer()
