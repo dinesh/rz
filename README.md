@@ -19,7 +19,10 @@ Installation
 To install `rz`, use pip:
   
     $ pip install rz-python
-
+ OR
+ 
+    $ pip install git+https://github.com/dinesh/rz.git 
+    
  RZB cli
 ---------
 `rzb` can generate kubernetes objects from `docker-compose`, heroku `app.json` and docker bundles (`DAB`)  and build docker/rkt images from source using local or remote image builder (local docker daemon, Google cloudbuilder or amazon ECS )
