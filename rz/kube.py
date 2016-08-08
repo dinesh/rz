@@ -236,4 +236,4 @@ class Pod(pykube.Pod):
 
 def _get_deployment_revision(obj):
     annotations = obj['metadata']['annotations']
-    return annotations.get('deployment.kubernetes.io/revision')
+    return annotations.get('rzd/revision')

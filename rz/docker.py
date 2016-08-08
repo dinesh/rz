@@ -30,7 +30,16 @@ class ComposeProject:
                                           allow_unicode=True,
                                           encoding='utf-8'))
 
+    def push_to_registry(self, server, username, password, image):
+        cmd = ["login", server,
+                "--username=%s" % username or "", 
+                "--password=%s" % password or ""]
+
+        _execute_with_docker(cmd)
+        _execute_with_docker(["push", image])
+
     def build_with(self, builder, config, skip=False):
+        built_images = []
         for service in self.project.services:
             if not skip:
                 if 'build' in service.options:
@@ -56,10 +65,13 @@ class ComposeProject:
                             image_uri, service.options['build'])
 
                     elif builder == 'local':
-                        image_uri, options = service.name, service.options[
-                            'build'].copy()
+                        image_uri = "%s:%s" % (service.name, config['tag'])
+                        options = service.options['build'].copy()
                         options['tag'] = image_uri
+                        
                         build_with_docker(options)
+                        built_images.append(image_uri)
+
                     else:
                         raise ValueError("unknown builder: %s" % builder)
 
@@ -67,26 +79,16 @@ class ComposeProject:
                     service.options['image'] = image_uri
 
                 elif 'image' in service.options:
-                    if builder == 'local':
-                        build_with_docker({'pull': service.options['image']})
+                    click.echo("Skipping %s" % service.name)
                 else:
                     raise ValueError(
                         "no image or build value found for service: %s" %
                         service.name)
+        return built_images
 
 
 def build_with_docker(req, pull_image=True, dry_run=False):
-    errmsg = None
-    try:
-        subprocess.check_output(["docker", "version"])
-    except subprocess.CalledProcessError, e:
-        errmsg = "Cannot communicate with docker daemon: " + str(e)
-    except OSError as e:
-        errmsg = "'docker' executable not found: " + str(e)
-
-    if errmsg:
-        raise RuntimeError(errmsg)
-
+    _execute_with_docker(["version"])
     return get_image(req, pull_image, dry_run)
 
 
@@ -113,7 +115,6 @@ def get_image(req, pull_image, dry_run=False):
     if not found and pull_image:
         if 'image' in req:
             cmd = ["docker", "pull", req["image"]]
-            print str(cmd)
 
             if not dry_run:
                 subprocess.check_call(cmd, stdout=sys.stderr)
@@ -122,7 +123,6 @@ def get_image(req, pull_image, dry_run=False):
             req['dockerfile'] = req.get('dockerfile', 'Dockerfile')
             cmd = ["docker", "build", "--tag=%s" %
                    req["tag"], "-f", req['dockerfile'], req['context']]
-            print str(cmd)
 
             if not dry_run:
                 subprocess.check_call(cmd, stdout=sys.stderr)
@@ -305,6 +305,19 @@ def _parse_docker_compose(project, **kwargs):
 
     return kube_objects
 
+
+def _execute_with_docker(cmd, dry_run=False):
+    errmsg = None
+    try:
+        print ["docker"] + cmd
+        return subprocess.check_output(["docker"] + cmd)
+    except subprocess.CalledProcessError, e:
+        errmsg = "Cannot communicate with docker daemon: " + str(e)
+    except OSError as e:
+        errmsg = "'docker' executable not found: " + str(e)
+
+    if errmsg:
+        raise RuntimeError(errmsg)
 
 def _get_restart_policy(options):
     if options:
